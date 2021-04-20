@@ -209,4 +209,12 @@ public class UserQuotaUsage: Object {
     public int64 usage { get; set; }
 }
 
+public class FileLock: Object {
+    public string repo_id { get; set; }
+    public string path { get; set; }
+    public string user { get; set; }
+    public int64 lock_time { get; set; }
+    public int64 expire { get; set; }
+}
+
 } // namespace

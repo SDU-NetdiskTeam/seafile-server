@@ -512,6 +512,26 @@ seafile_get_checkout_task (const char *repo_id, GError **error);
 GList *
 seafile_get_sync_task_list (GError **error);
 
+/* file lock */
+GList *
+seafile_get_locked_files (const char *repo_id);
+
+int
+seafile_lock_file (const char *repo_id, const char *path, const char *user, gint64 expire);
+
+int
+seafile_unlock_file (const char *repo_id, const char *path);
+
+int
+seafile_check_file_lock (const char *repo_id, const char *path, const char *user);
+
+int
+seafile_refresh_file_lock (const char *repo_id, const char *path);
+
+GObject *
+seafile_get_lock_info (const char *repo_id, const char *path);
+
+/* share repo to user */
 char *
 seafile_share_subdir_to_user (const char *repo_id,
                               const char *path,
