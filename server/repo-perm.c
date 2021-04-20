@@ -278,6 +278,7 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
                                       int limit,
                                       GError **error)
 {
+    seaf_message("-->seaf_repo_manager_list_dir_with_perm(repo_id=%s, dir_path=%d)\n", repo_id, dir_path);
     // This "perm" means permission, not permutation!!!
     SeafRepo *repo;
     char *perm = NULL;
@@ -365,12 +366,14 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
                           "modifier", dent->modifier,
                           NULL);
 
-        if (shared_sub_dirs && S_ISREG(dent->mode)) {
+        if (S_ISREG(dent->mode)) {
             if (strcmp (dir_path, "/") == 0) {
                 cur_path = g_strconcat (dir_path, dent->name, NULL);
             } else {
                 cur_path = g_strconcat (dir_path, "/", dent->name, NULL);
             }
+
+            seaf_message("REG det, name='%s', path='%s'\n", dent->name, cur_path);
 
             GList *ptr;
             for (ptr = file_locks; ptr; ptr = ptr->next)
@@ -403,7 +406,7 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
         /*DEBUG*/ seaf_message("[SEAFILE_TYPE_DIRENT] "
                                "obj_id=%s, obj_name=%s, mode=%d, version=%d, "
                                "mtime=%lld, size=%lld, permission=%s, modifier=%s, "
-                               "is_locked=%d, lock_owner=%d, lock_time=%lld, is_shared=%d\n",
+                               "is_locked=%d, lock_owner=%s, lock_time=%lld, is_shared=%d\n",
                                dent->id, dent->name, dent->mode, dent->version,
                                dent->mtime, dent->size, perm, dent->modifier,
                                seafile_dirent_get_is_locked(d),
@@ -412,14 +415,18 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
                                seafile_dirent_get_is_shared(d));
         /*
          * Example: [SEAFILE_TYPE_DIRENT]
-         * obj_id=07841c393b7793c437ad1ca5b32e5be0197999ed,
-         * obj_name=233.md,
+         * obj_id=602a603ed89bf6685b1756ac01fba89b146d651c,
+         * obj_name=cash.txt,
          * mode=33188,
          * version=1,
-         * mtime=1616989340,
-         * size=18,
+         * mtime=1618933706,
+         * size=5,
          * permission=rw,
-         * modifier=root@test.com
+         * modifier=root@test.com,
+         * is_locked=1,
+         * lock_owner=root@test.com,
+         * lock_time=1618933709823359,
+         * is_shared=0
          */
 
         res = g_list_prepend (res, d);
@@ -433,5 +440,6 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
     if (res)
         res = g_list_reverse (res);
 
+    seaf_message("<--seaf_repo_manager_list_dir_with_perm\n");
     return res;
 }
