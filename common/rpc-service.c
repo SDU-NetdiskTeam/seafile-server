@@ -1531,6 +1531,44 @@ remove_file_lock_row (const char *repo_id,
 }
 
 static gboolean
+is_file_lock_record_obsolete (gint64 lock_time, gint64 expire)
+{
+    gint64 current_time = get_current_time();
+    // Get current timestamp in microsecond.
+
+    // Check if this record is obsolete
+    if (expire == 0)
+    {
+        // Expire = 0, use the hour data in config file.
+
+        // Read configuration from seafile.conf
+        int default_expire_hours = seaf_cfg_manager_get_config_int (seaf->share_mgr->seaf->cfg_mgr,
+                                                                    "file_lock", "default_expire_hours");
+        seaf_message("[READ CONF] file_lock.default_expire_hours=%d\n", default_expire_hours);
+        if (default_expire_hours < 0)
+            default_expire_hours = 12;
+        // The default setting is 12 hours.
+
+        gint64 expire_time_fragment = (gint64) default_expire_hours * 60 * 60 * 1000000;
+        // Calculate fragment in microseconds.
+
+        if (lock_time + expire_time_fragment < current_time)
+        {
+            return TRUE;
+        }
+    }
+    else
+    {
+        // Using expire time stored in db.
+        if (expire < current_time)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static gboolean
 collect_file_lock_data_row (CcnetDBRow *row, void *data)
 {
     GList **data_list = data;
@@ -1546,6 +1584,13 @@ collect_file_lock_data_row (CcnetDBRow *row, void *data)
     user = seaf_db_row_get_column_text(row, 2);
     lock_time = seaf_db_row_get_column_int64(row, 3);
     expire = seaf_db_row_get_column_int64(row, 4);
+
+    if (is_file_lock_record_obsolete(lock_time, expire))
+    {
+        remove_file_lock_row(repo_id, path, user);
+        return TRUE;
+        // The record is obsolete, so no need to make new object and prepend.
+    }
 
     // Storing data into a new object.
     SeafileFileLock *file_lock;
@@ -1773,37 +1818,8 @@ seafile_check_file_lock (const char *repo_id,
     lock_expire_time = seafile_file_lock_get_expire(file_lock);
     seaf_message("Back got: user=%s, lock_time=%lld, expire=%lld.\n", lock_user_name, lock_time, lock_expire_time);
 
-    gboolean has_expired = FALSE;
-
-    // Judge lock_expire_time time.
-    if (lock_expire_time == 0)
-    {
-        // Expire = 0, use the hour data in config file.
-
-        // Read configuration from seafile.conf
-        int default_expire_hours = seaf_cfg_manager_get_config_int (seaf->share_mgr->seaf->cfg_mgr,
-                                                                 "file_lock", "default_expire_hours");
-        seaf_message("[READ CONF] file_lock.default_expire_hours=%d\n", default_expire_hours);
-        if (default_expire_hours < 0)
-            default_expire_hours = 12;
-        // The default setting is 12 hours.
-
-        gint64 expire_time_fragment = (gint64) default_expire_hours * 60 * 60 * 1000000;
-        // Calculate fragment in microseconds.
-
-        if (lock_time + expire_time_fragment < current_time)
-        {
-            has_expired = TRUE;
-        }
-    }
-    else
-    {
-        // Using expire time stored in db.
-        if (lock_expire_time < current_time)
-        {
-            has_expired = TRUE;
-        }
-    }
+    // Judge if record has been obsolete.
+    gboolean has_expired = is_file_lock_record_obsolete(lock_time, lock_expire_time);
 
     if (has_expired)
     {
