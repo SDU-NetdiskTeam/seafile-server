@@ -72,6 +72,7 @@ lib/crypt.c
 lib/repo.c
 lib/copy-task.c
 lib/search-result.c
+lib/ccnetobj.c
 seaf-server
 seafserv-gc
 seaf-migrate
@@ -96,3 +97,5 @@ tests/conf/PeerMgr
 /symbols
 __pycache__/
 .cache/
+
+/.idea

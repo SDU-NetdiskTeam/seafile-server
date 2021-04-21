@@ -1514,6 +1514,424 @@ seafile_list_repo_shared_to (const char *from_user, const char *repo_id,
                                                    error);
 }
 
+/* file lock */
+void
+remove_file_lock_row (const char *repo_id,
+                      const char *path,
+                      const char *user)
+{
+    // Removes a record from table [file_locks].
+    char sql[512];
+    snprintf (sql, 512,
+              "DELETE FROM FileLocks "
+              "WHERE repo_id='%s' AND path='%s' AND user_name='%s' ",
+              repo_id, path, user);
+    /*DEBUG*/ seaf_message("SQL: %s\n", sql);
+    seaf_db_query (seaf->share_mgr->seaf->db, sql);
+}
+
+static gboolean
+is_file_lock_record_obsolete (gint64 lock_time, gint64 expire)
+{
+    gint64 current_time = get_current_time();
+    // Get current timestamp in microsecond.
+
+    // Check if this record is obsolete
+    if (expire == 0)
+    {
+        // Expire = 0, use the hour data in config file.
+
+        // Read configuration from seafile.conf
+        int default_expire_hours = seaf_cfg_manager_get_config_int (seaf->share_mgr->seaf->cfg_mgr,
+                                                                    "file_lock", "default_expire_hours");
+        seaf_message("[READ CONF] file_lock.default_expire_hours=%d\n", default_expire_hours);
+        if (default_expire_hours < 0)
+            default_expire_hours = 12;
+        // The default setting is 12 hours.
+
+        gint64 expire_time_fragment = (gint64) default_expire_hours * 60 * 60 * 1000000;
+        // Calculate fragment in microseconds.
+
+        if (lock_time + expire_time_fragment < current_time)
+        {
+            return TRUE;
+        }
+    }
+    else
+    {
+        // Using expire time stored in db.
+        if (expire < current_time)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static gboolean
+collect_file_lock_data_row (CcnetDBRow *row, void *data)
+{
+    GList **data_list = data;
+    const char *repo_id;
+    const char *path;
+    const char *user;
+    gint64 lock_time;
+    gint64 expire;
+
+    // Getting data from data row.
+    repo_id = seaf_db_row_get_column_text(row, 0);
+    path = seaf_db_row_get_column_text(row, 1);
+    user = seaf_db_row_get_column_text(row, 2);
+    lock_time = seaf_db_row_get_column_int64(row, 3);
+    expire = seaf_db_row_get_column_int64(row, 4);
+
+    if (is_file_lock_record_obsolete(lock_time, expire))
+    {
+        remove_file_lock_row(repo_id, path, user);
+        return TRUE;
+        // The record is obsolete, so no need to make new object and prepend.
+    }
+
+    // Storing data into a new object.
+    SeafileFileLock *file_lock;
+    file_lock = g_object_new (SEAFILE_TYPE_FILE_LOCK,
+                             "repo_id", repo_id,
+                             "path", path,
+                             "user", user,
+                             "lock_time", lock_time,
+                             "expire", expire,
+                             NULL);
+
+    // Store the file_lock object into GList.
+    *data_list = g_list_prepend (*data_list, file_lock);
+
+    // Guessing that TRUE means continue processing.
+    return TRUE;
+}
+
+GList *
+seafile_get_locked_files (const char *repo_id)
+{
+    /*
+     * Get all locked files from a repo.
+     * Returns: A list of FileLock objects (lib/repo.vala)
+     */
+    seaf_message("-->Get locked files(%s)\n", repo_id);
+
+    GList *ret = NULL;
+    char sql[512];
+
+    // Select all data to use unified collector.
+    snprintf (sql, 512,
+              "SELECT repo_id, path, user_name, lock_time, expire "
+              "FROM FileLocks "
+              "WHERE repo_id='%s' ",
+              repo_id);
+    /*DEBUG*/ seaf_message("SQL: %s\n", sql);
+    int n_row = seaf_db_foreach_selected_row(seaf->share_mgr->seaf->db, sql,
+                                             collect_file_lock_data_row, &ret);
+    if (n_row <= 0) {
+        // No data, no usable lock.
+        /*DEBUG*/ seaf_message("<--Get locked files: Return NULL\n");
+        return NULL;
+    }
+    else
+    {
+        /*DEBUG*/ seaf_message("<--Get locked files: Return %d\n", ret);
+        return ret;
+    }
+}
+
+int
+seafile_lock_file (const char *repo_id,
+                   const char *path,
+                   const char *user,
+                   gint64 expire)
+{
+    /*
+     * Locks the file for specific user.
+     * Returns:
+     * 0: Lock success.
+     * -1: File already locked, you cannot lock it.
+     * -2: Permission denied.
+     */
+    seaf_message("-->Lock file(%s, %s, %s, %d)\n", repo_id, path, user, expire);
+
+    // Format path.
+    char format_path[strlen(path) + 20];
+    strcpy(format_path, format_dir_path(path));
+
+    // Locking file permission is checked via seahub actions.
+    // It looks that all the operations from seahub are trusted.
+
+    // Check if file is already locked.
+    if (seafile_check_file_lock(repo_id, format_path, user) != 0)
+    {
+        // File is already locked.
+        /*DEBUG*/ seaf_message("<--Lock file: -1, file already locked.\n");
+        return -1;
+    }
+    // The action of [seafile_check_file_lock] also removes redundant lock info.
+    // Now there should be no data matching this path record.
+    // We can go ahead and add this record.
+
+    gint64 current_time = get_current_time();
+    // Get current timestamp in microsecond.
+
+    // Add lock record.
+    seaf_db_statement_query (seaf->share_mgr->seaf->db,
+                             "INSERT INTO FileLocks "
+                             "(repo_id, path, user_name, lock_time, expire) "
+                             "VALUES (?, ?, ?, ?, ?) ",
+                             5,
+                             "string", repo_id,
+                             "string", format_path,
+                             "string", user,
+                             "int64", current_time,
+                             "int64", expire);
+    /*DEBUG*/ seaf_message("<--Lock file: 0, OK.\n");
+    return 0;
+}
+
+int
+seafile_unlock_file (const char *repo_id,
+                     const char *path)
+{
+    /*
+     * Unlocks the file for specific path. Any user.
+     * Returns:
+     * 0: Unlock success.
+     * -1: File not locked, you cannot unlock it.
+     * -2: Permission denied.
+     */
+    seaf_message("-->Unlock file(%s, %s)\n", repo_id, path);
+
+    // Format path.
+    char format_path[strlen(path) + 20];
+    strcpy(format_path, format_dir_path(path));
+
+    // Unlocking file permission is checked via seahub actions.
+    // It looks that all the operations from seahub are trusted.
+
+    // Check if file is already locked.
+    if (seafile_check_file_lock(repo_id, format_path, "") == 0)
+    {
+        // File is not locked.
+        /*DEBUG*/ seaf_message("<--Unlock file: -1\n");
+        return -1;
+    }
+
+    // Remove lock record
+    seaf_db_statement_query (seaf->share_mgr->seaf->db,
+                             "DELETE FROM FileLocks "
+                             "WHERE repo_id=? AND path=? ",
+                             2,
+                             "string", repo_id,
+                             "string", format_path);
+    /*DEBUG*/ seaf_message("<--Unlock file: 0, OK.\n");
+    return 0;
+}
+
+static gboolean
+handle_file_lock_user_and_time (CcnetDBRow *row, void *data)
+{
+    // Returning TRUE **MIGHT** means Continue.
+    // TODO: Figure out what this boolean means.
+    GList **data_list = data;
+    const char *user_name;
+    gint64 lock_time;
+    gint64 expire;
+
+    // Getting data from data row.
+    user_name = seaf_db_row_get_column_text(row, 0);
+    lock_time = seaf_db_row_get_column_int64(row, 1);
+    expire = seaf_db_row_get_column_int64(row, 2);
+
+    // Storing data into GList.
+    // If prepend, then use [next] to read backwards.
+    // If append, then use [prev] to read backwards.
+    SeafileFileLock *file_lock;
+    file_lock = g_object_new (SEAFILE_TYPE_FILE_LOCK,
+                              "repo_id", "NOT_AVAIL",
+                              "path", "NOT_AVAIL",
+                              "user", user_name,
+                              "lock_time", lock_time,
+                              "expire", expire,
+                              NULL);
+
+    // Store the file_lock object into GList.
+    *data_list = g_list_prepend (*data_list, file_lock);
+
+    // Guessing that FALSE means stop processing.
+    // Since one file can only have one lock, we can stop processing.
+    return FALSE;
+}
+
+int
+seafile_check_file_lock (const char *repo_id,
+                         const char *path,
+                         const char *user)
+{
+    /*
+     * Returns:
+     * 0, if file is not locked.
+     * 1, if file is locked by others.
+     * 2, if file is locked by me.
+     */
+    seaf_message("-->Check file lock(%s, %s, %s)\n", repo_id, path, user);
+
+    // Format path.
+    char format_path[strlen(path) + 20];
+    strcpy(format_path, format_dir_path(path));
+
+    char sql[512];
+
+    GList *data = NULL;
+    // Defining [data] to contain data.
+    // Define [*ptr] to iterate the [data].
+
+    snprintf (sql, 512,
+              "SELECT user_name, lock_time, expire "
+              "FROM FileLocks "
+              "WHERE repo_id='%s' AND path='%s' ",
+              repo_id, format_path);
+    /*DEBUG*/ seaf_message("SQL: %s\n", sql);
+
+    if (seaf_db_foreach_selected_row(seaf->share_mgr->seaf->db, sql,
+                                     handle_file_lock_user_and_time, &data) <= 0)
+    {
+        // No lock row, Not locked.
+        seaf_message("<--Check file lock OK, value is 0 (Front).\n");
+        return 0;
+    }
+
+    gint64 current_time = get_current_time();
+    // Get current timestamp in microsecond.
+    const char *lock_user_name;
+    gint64 lock_time;
+    gint64 lock_expire_time;
+
+    // Processing data from GList node.
+    SeafileFileLock *file_lock = data->data;
+    lock_user_name = seafile_file_lock_get_user(file_lock);
+    lock_time = seafile_file_lock_get_lock_time(file_lock);
+    lock_expire_time = seafile_file_lock_get_expire(file_lock);
+    seaf_message("Back got: user=%s, lock_time=%lld, expire=%lld.\n", lock_user_name, lock_time, lock_expire_time);
+
+    // Judge if record has been obsolete.
+    gboolean has_expired = is_file_lock_record_obsolete(lock_time, lock_expire_time);
+
+    if (has_expired)
+    {
+        // Since expired. Remove it from database by the way.
+        remove_file_lock_row (repo_id, format_path, lock_user_name);
+
+        // Since the last record is expired, the lock is free.
+        seaf_message("<--Check file lock OK, value is 0, row removed.\n");
+        return 0;
+    }
+    else
+    {
+        // Not expired, judge username.
+        if (strcmp(lock_user_name, user) == 0)
+        {
+            // Matches, locker is me.
+            seaf_message("<--Check file lock OK, value is 2.\n");
+            return 2;
+        }
+        else
+        {
+            // Mismatch, locker is not me.
+            seaf_message("<--Check file lock OK, value is 1.\n");
+            return 1;
+        }
+    }
+}
+
+int
+seafile_refresh_file_lock (const char *repo_id,
+                           const char *path)
+{
+    /*
+     * return:
+     * 0: success
+     * -1: file is not locked
+     */
+    seaf_message("-->Refresh file lock(%s, %s)\n", repo_id, path);
+
+    // Format path.
+    char format_path[strlen(path) + 20];
+    strcpy(format_path, format_dir_path(path));
+
+    // Check whether file is locked or not.
+    if (seafile_check_file_lock(repo_id, format_path, "") == 0)
+    {
+        // File is not locked.
+        seaf_message("<--Refresh file lock Return -1, file not locked.\n");
+        return -1;
+    }
+
+    // Update lock timestamp.
+    gint64 current_time = get_current_time();
+    // Get current timestamp in microsecond.
+
+    // Update lock record.
+    // One path only have one lock, so just repo_id and path is ok.
+    seaf_db_statement_query (seaf->share_mgr->seaf->db,
+                             "UPDATE FileLocks "
+                             "SET lock_time=? "
+                             "WHERE repo_id=? AND path=? ",
+                             3,
+                             "int64", current_time,
+                             "string", repo_id,
+                             "string", format_path);
+
+    seaf_message("<--Refresh file lock Return 0.\n");
+    return 0;
+}
+
+GObject *
+seafile_get_lock_info (const char *repo_id,
+                       const char *path)
+{
+    /*
+     * Get the info of a lock.
+     * Returns: A FileLock object (lib/repo.vala)
+     */
+    seaf_message("-->Get lock info(%s, %s)\n", repo_id, path);
+
+    // Format path.
+    char format_path[strlen(path) + 20];
+    strcpy(format_path, format_dir_path(path));
+
+    GList *temp_list = NULL;
+    char sql[512];
+
+    // Select all data to use unified collector.
+    snprintf (sql, 512,
+              "SELECT repo_id, path, user_name, lock_time, expire "
+              "FROM FileLocks "
+              "WHERE repo_id='%s' AND path='%s' ",
+              repo_id, format_path);
+    seaf_message("SQL: %s\n", sql);
+    int n_row = seaf_db_foreach_selected_row(seaf->share_mgr->seaf->db, sql,
+                                             collect_file_lock_data_row, &temp_list);
+    if (n_row <= 0) {
+        // No data, no usable lock.
+        seaf_message("<--Get lock info Return NULL.\n");
+        return NULL;
+    }
+    else
+    {
+        // GList is a 2-directional linked-list.
+        // The ptr itself represents the addr of a node.
+        // So we can just use this node to get it.
+        seaf_message("<--Get lock info Return %d.\n", temp_list->data);
+        return temp_list->data;
+    }
+}
+
+/* share repo to user */
 char *
 seafile_share_subdir_to_user (const char *repo_id,
                               const char *path,

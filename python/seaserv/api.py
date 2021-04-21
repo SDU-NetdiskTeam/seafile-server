@@ -398,11 +398,78 @@ class SeafileAPI(object):
         return seafserv_threaded_rpc.get_upload_tmp_file_offset (repo_id, file_path)
 
     # file lock
+    def get_locked_files(selfself, repo_id):
+        """
+        Return a list of FileLock objects (lib/repo.vala)
+        :param repo_id: ID of repo.
+        :return:
+        """
+        return seafserv_threaded_rpc.get_locked_files(repo_id)
+
+    def lock_file(self, repo_id, path, user, expire):
+        """
+        Lock the file
+
+        :param repo_id: char*, ID of repo.
+        :param path: Full path of the lock target file.
+        :param user: user email.
+        :param expire: When will the lock expire, in microsecond timestamp, int64.
+        :return: None
+        PARAM EXAMPLE: 
+            repo_id= e0ebda1f-0fc2-4ed9-872b-f9a7d0b75ed6 
+            path= /test.docx
+            user= root@test.com
+            expire= 0
+        """
+        print("lock_file called, params are: repo_id=", repo_id, "path=", path,
+              ", user=", user, ", expire=", expire)   # for debug.
+        return seafserv_threaded_rpc.lock_file(repo_id, path, user, expire)
+
+    def unlock_file(self, repo_id, path):
+        """
+        Unlock the file.
+
+        :param repo_id: char*, ID of repo.
+        :param path: Full path of the lock target file.
+        :return: None
+        """
+        print("unlock_file called, params are: repo_id=", repo_id, "path=", path)   # for debug.
+        return seafserv_threaded_rpc.unlock_file(repo_id, path)
+
+    FILE_LOCKED_BY_OTHERS = 1
+    FILE_LOCKED_BY_ME = 2
+
     def check_file_lock(self, repo_id, path, user):
         """
         Always return 0 since CE doesn't support file locking.
+        No, not anymore!
+        Returns:
+            0: file is not locked.
+            1: file is locked by others.
+            2: file is locked by me.
         """
-        return 0
+        return seafserv_threaded_rpc.check_file_lock(repo_id, path, user)
+
+    def refresh_file_lock(self, repo_id, path):
+        """
+
+        :param repo_id:
+        :param path:
+        :return:
+            0: success
+            -1: error
+            -2: the file is not locked
+        """
+        return seafserv_threaded_rpc.refresh_file_lock(repo_id, path)
+
+    def get_lock_info(self, repo_id, path):
+        """
+
+        :param repo_id:
+        :param path:
+        :return: File lock object
+        """
+        return seafserv_threaded_rpc.get_lock_info(repo_id, path)
 
     # share repo to user
     def share_repo(self, repo_id, from_username, to_username, permission):

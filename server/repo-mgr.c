@@ -1077,6 +1077,27 @@ create_tables_mysql (SeafRepoManager *mgr)
     if (seaf_db_query (db, sql) < 0)
         return -1;
 
+    sql = "CREATE TABLE IF NOT EXISTS FileLockTimestamp (\n"
+          "  id BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT,\n"
+          "  repo_id CHAR(40),\n"
+          "  update_time BIGINT NOT NULL,\n"
+          "  UNIQUE INDEX(repo_id)\n"
+          ");";
+    if (seaf_db_query (db, sql) < 0)
+        return -1;
+
+    sql = "CREATE TABLE IF NOT EXISTS FileLocks (\n"
+          "  id BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT,\n"
+          "  repo_id CHAR(40) NOT NULL,\n"
+          "  path TEXT NOT NULL,\n"
+          "  user_name VARCHAR(255) NOT NULL,\n"
+          "  lock_time BIGINT,\n"
+          "  expire BIGINT,\n"
+          "  KEY(repo_id)\n"
+          ") ENGINE=INNODB;";
+    if (seaf_db_query (db, sql) < 0)
+        return -1;
+
     return 0;
 }
 

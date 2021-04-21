@@ -10,6 +10,8 @@
 
 #include "seafile-error.h"
 #include "seaf-utils.h"
+
+#include "seafile-rpc.h"
 /*
  * Permission priority: owner --> personal share --> group share --> public.
  * Permission with higher priority overwrites those with lower priority.
@@ -276,6 +278,8 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
                                       int limit,
                                       GError **error)
 {
+    seaf_message("-->seaf_repo_manager_list_dir_with_perm(repo_id=%s, dir_path=%d)\n", repo_id, dir_path);
+    // This "perm" means permission, not permutation!!!
     SeafRepo *repo;
     char *perm = NULL;
     SeafDir *dir;
@@ -284,6 +288,7 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
     GList *res = NULL;
     GList *p;
 
+    // Check repo permission.
     perm = seaf_repo_manager_check_permission (mgr, repo_id, user, error);
     if (!perm) {
         if (*error == NULL)
@@ -291,6 +296,7 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
         return NULL;
     }
 
+    // Get SeafRepo obj from seaf_repo_manager by repo_id.
     repo = seaf_repo_manager_get_repo (seaf->repo_mgr, repo_id);
     if (!repo) {
         g_set_error (error, SEAFILE_DOMAIN, SEAF_ERR_BAD_ARGS, "Bad repo id");
@@ -298,6 +304,7 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
         return NULL;
     }
 
+    // Get SeafDir obj from seaf_fs_manager by dir_id.
     dir = seaf_fs_manager_get_seafdir (seaf->fs_mgr,
                                        repo->store_id, repo->version, dir_id);
     if (!dir) {
@@ -306,6 +313,8 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
         g_free (perm);
         return NULL;
     }
+
+
 
     dir->entries = g_list_sort (dir->entries, comp_dirent_func);
 
@@ -327,6 +336,9 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
         }
         g_free (repo_owner);
     }
+
+    // Handle file lock
+    GList *file_locks = seafile_get_locked_files(repo_id);
 
     for (p = dir->entries; p != NULL; p = p->next, index++) {
         if (index < offset) {
@@ -354,6 +366,32 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
                           "modifier", dent->modifier,
                           NULL);
 
+        if (S_ISREG(dent->mode)) {
+            if (strcmp (dir_path, "/") == 0) {
+                cur_path = g_strconcat (dir_path, dent->name, NULL);
+            } else {
+                cur_path = g_strconcat (dir_path, "/", dent->name, NULL);
+            }
+
+            seaf_message("REG det, name='%s', path='%s'\n", dent->name, cur_path);
+
+            GList *ptr;
+            for (ptr = file_locks; ptr; ptr = ptr->next)
+            {
+                if (strcmp(seafile_file_lock_get_path(ptr->data), cur_path) == 0)
+                {
+                    g_object_set (d,
+                                  "is_locked", TRUE,
+                                  "lock_owner", seafile_file_lock_get_user(ptr->data),
+                                  "lock_time", seafile_file_lock_get_lock_time(ptr->data),
+                                  NULL);
+                    break;
+                }
+            }
+            g_free (cur_path);
+
+        }
+
         if (shared_sub_dirs && S_ISDIR(dent->mode)) {
             if (strcmp (dir_path, "/") == 0) {
                 cur_path = g_strconcat (dir_path, dent->name, NULL);
@@ -364,6 +402,33 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
             g_free (cur_path);
             g_object_set (d, "is_shared", is_shared, NULL);
         }
+
+        /*DEBUG*/ seaf_message("[SEAFILE_TYPE_DIRENT] "
+                               "obj_id=%s, obj_name=%s, mode=%d, version=%d, "
+                               "mtime=%lld, size=%lld, permission=%s, modifier=%s, "
+                               "is_locked=%d, lock_owner=%s, lock_time=%lld, is_shared=%d\n",
+                               dent->id, dent->name, dent->mode, dent->version,
+                               dent->mtime, dent->size, perm, dent->modifier,
+                               seafile_dirent_get_is_locked(d),
+                               seafile_dirent_get_lock_owner(d),
+                               seafile_dirent_get_lock_time(d),
+                               seafile_dirent_get_is_shared(d));
+        /*
+         * Example: [SEAFILE_TYPE_DIRENT]
+         * obj_id=602a603ed89bf6685b1756ac01fba89b146d651c,
+         * obj_name=cash.txt,
+         * mode=33188,
+         * version=1,
+         * mtime=1618933706,
+         * size=5,
+         * permission=rw,
+         * modifier=root@test.com,
+         * is_locked=1,
+         * lock_owner=root@test.com,
+         * lock_time=1618933709823359,
+         * is_shared=0
+         */
+
         res = g_list_prepend (res, d);
     }
 
@@ -375,5 +440,6 @@ seaf_repo_manager_list_dir_with_perm (SeafRepoManager *mgr,
     if (res)
         res = g_list_reverse (res);
 
+    seaf_message("<--seaf_repo_manager_list_dir_with_perm\n");
     return res;
 }
