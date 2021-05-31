@@ -123,11 +123,23 @@ static int check_db_table (CcnetDB *db)
         if (seaf_db_query (db, sql) < 0)
             return -1;
 
+
+
         sql = "CREATE TABLE IF NOT EXISTS OrgGroup ("
             "id BIGINT NOT NULL PRIMARY KEY AUTO_INCREMENT, org_id INTEGER, "
             "group_id INTEGER, INDEX (group_id), "
             "UNIQUE INDEX(org_id, group_id))"
             "ENGINE=INNODB";
+        if (seaf_db_query (db, sql) < 0)
+            return -1;
+
+        sql = "CREATE TABLE IF NOT EXISTS OrgRepo ("
+              "org_id int, "
+              "repo_id char(36), "
+              "user varchar(255), "
+              "PRIMARY KEY (org_id,repo_id), "
+              "UNIQUE (repo_id))"
+              "ENGINE=INNODB;";
         if (seaf_db_query (db, sql) < 0)
             return -1;
         
