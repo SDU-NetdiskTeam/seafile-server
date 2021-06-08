@@ -2459,7 +2459,7 @@ is_permission_valid (const char *perm)
         return FALSE;
     }
 
-    return strcmp (perm, "r") == 0 || strcmp (perm, "rw") == 0;
+    return strcmp (perm, "r") == 0 || strcmp (perm, "rw") == 0 || strcmp (perm, "cloud-edit") == 0 || strcmp (perm, "preview") == 0;;
 }
 
 char *
